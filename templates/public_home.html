@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Главная{% endblock %}
+{% block header_title %}Добро пожаловать в {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+  <div class="card">
+    <h1 class="text-2xl font-black text-slate-900 mb-2">{{ app_name }}</h1>
+    <p class="text-slate-600 mb-5">
+      Простая CRM для малого бизнеса: ведите базу клиентов, статусы обслуживания и контакты.
+    </p>
+    <div class="flex flex-wrap gap-3">
+      <a href="{{ url_for('main.register') }}" class="btn-primary">
+        Зарегистрироваться
+      </a>
+      <a href="{{ url_for('main.login') }}" class="btn-secondary">
+        Войти
+      </a>
+      <a href="{{ url_for('main.docs') }}" class="btn-outline">
+        Документация
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="text-lg font-bold text-slate-900 mb-3">Что умеет BizFlow</h2>
+    <ul class="space-y-2 text-slate-700">
+      <li class="flex gap-2">
+        <i class="fas fa-user-shield text-primary mt-1"></i>
+        <span><b>Авторизация</b>: регистрация и вход по Email/паролю</span>
+      </li>
+      <li class="flex gap-2">
+        <i class="fas fa-database text-primary mt-1"></i>
+        <span><b>Реляционная БД</b>: SQLite, данные сохраняются между запусками</span>
+      </li>
+      <li class="flex gap-2">
+        <i class="fas fa-list-check text-primary mt-1"></i>
+        <span><b>Клиенты</b>: добавить/редактировать/удалить, статусы и поиск</span>
+      </li>
+      <li class="flex gap-2">
+        <i class="fas fa-circle-exclamation text-primary mt-1"></i>
+        <span><b>Ошибки</b>: показываем сообщения, приложение не падает</span>
+      </li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+

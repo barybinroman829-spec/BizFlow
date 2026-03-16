@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Клиенты{% endblock %}
+{% block header_title %}База клиентов{% endblock %}
+
+{% block content %}
+<div class="card overflow-hidden">
+  <form class="p-4 border-b border-slate-100 flex gap-4 flex-wrap" method="get">
+    <div class="relative flex-1 min-w-[200px]">
+      <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
+      <input name="q" value="{{ q }}" type="text" placeholder="Поиск по имени, компании или email..."
+             class="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 text-sm">
+    </div>
+    <select name="status"
+            class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+      <option value="all" {% if status == 'all' %}selected{% endif %}>Все статусы</option>
+      <option value="new" {% if status == 'new' %}selected{% endif %}>Новый</option>
+      <option value="active" {% if status == 'active' %}selected{% endif %}>В работе</option>
+      <option value="completed" {% if status == 'completed' %}selected{% endif %}>Завершен</option>
+      <option value="archived" {% if status == 'archived' %}selected{% endif %}>Архив</option>
+    </select>
+    <button class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-teal-700" type="submit">
+      Применить фильтр
+    </button>
+  </form>
+
+  {% if not rows %}
+    <div class="p-8 text-center text-slate-500">
+      Клиенты не найдены. Попробуйте изменить фильтр или добавить нового клиента.
+    </div>
+  {% else %}
+    <table class="w-full text-left">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="p-4 font-medium">Клиент</th>
+          <th class="p-4 font-medium">Контакты</th>
+          <th class="p-4 font-medium">Статус</th>
+          <th class="p-4 font-medium text-right">Действия</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+        <tr class="hover:bg-slate-50 transition-colors">
+          <td class="p-4">
+            <div class="font-medium text-slate-900">{{ row.full_name }}</div>
+            <div class="text-xs text-slate-500">{{ row.company }}</div>
+          </td>
+          <td class="p-4 text-sm text-slate-700">
+            <div><i class="fas fa-phone w-4 text-slate-400"></i> {{ row.phone }}</div>
+            <div class="mt-1"><i class="fas fa-envelope w-4 text-slate-400"></i> {{ row.email }}</div>
+          </td>
+          <td class="p-4">
+            {% include "partials/status_badge.html" with context %}
+          </td>
+          <td class="p-4 text-right">
+            <a class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200"
+               href="{{ url_for('main.client_edit', client_id=row.id) }}">
+              Редактировать
+            </a>
+            <form method="post" action="{{ url_for('main.client_delete', client_id=row.id) }}"
+                  class="inline" onsubmit="return confirm('Удалить клиента?');">
+              <button class="ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-rose-50 text-rose-700 hover:bg-rose-100" type="submit">
+                Удалить
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}
+

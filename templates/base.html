@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}BizFlow{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  </head>
+  <body class="bg-slate-50 text-slate-800 h-screen flex overflow-hidden">
+    {% set authed = user is defined and user %}
+
+    {% if authed %}
+    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col z-20 shadow-lg">
+      <div class="p-6 flex items-center gap-3 border-b border-slate-100">
+        <div class="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-primary font-black">BF</div>
+        <div>
+          <div class="text-xl font-bold text-slate-900 tracking-tight">BizFlow</div>
+          <div class="text-xs text-slate-500">CRM для малого бизнеса</div>
+        </div>
+      </div>
+
+      <nav class="flex-1 p-4 space-y-2">
+        <a href="{{ url_for('main.dashboard') }}"
+           class="nav-item {% if active_nav == 'dashboard' %}nav-item-active{% endif %}">
+          <i class="fas fa-chart-pie w-5"></i> Дашборд
+        </a>
+        <a href="{{ url_for('main.clients') }}"
+           class="nav-item {% if active_nav == 'clients' %}nav-item-active{% endif %}">
+          <i class="fas fa-users w-5"></i> Клиенты
+        </a>
+        <a href="{{ url_for('main.docs') }}"
+           class="nav-item {% if active_nav == 'docs' %}nav-item-active{% endif %}">
+          <i class="fas fa-book w-5"></i> Документация
+        </a>
+      </nav>
+
+      <div class="p-4 border-t border-slate-100">
+        <div class="flex items-center gap-3 px-4 py-2">
+          <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
+            {{ (user.email[0] if user.email else 'U')|upper }}
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-slate-900 truncate">{{ user.email }}</p>
+            <form method="post" action="{{ url_for('main.logout') }}">
+              <button class="text-xs text-slate-500 hover:text-slate-800 underline" type="submit">Выйти</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </aside>
+    {% endif %}
+
+    <main class="flex-1 flex flex-col relative overflow-hidden">
+      <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-8 z-10">
+        <h2 class="text-lg font-semibold text-slate-800">
+          {% block header_title %}BizFlow{% endblock %}
+        </h2>
+        <div>
+          {% block header_actions %}
+          {% if authed %}
+            {% if active_nav == 'clients' %}
+              <a href="{{ url_for('main.client_new') }}"
+                 class="btn-primary">
+                <i class="fas fa-plus"></i> Добавить клиента
+              </a>
+            {% else %}
+              <a href="{{ url_for('main.docs') }}" class="btn-secondary">
+                Открыть документацию
+              </a>
+            {% endif %}
+          {% else %}
+            <div class="flex gap-2">
+              <a href="{{ url_for('main.login') }}" class="btn-secondary">Войти</a>
+              <a href="{{ url_for('main.register') }}" class="btn-primary">Регистрация</a>
+            </div>
+          {% endif %}
+          {% endblock %}
+        </div>
+      </header>
+
+      <div class="flex-1 overflow-y-auto p-6 md:p-8 bg-slate-50 relative">
+        <div class="absolute inset-0 opacity-5 pointer-events-none bg-gradient"></div>
+        <div class="relative z-10 max-w-7xl mx-auto">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              <div class="space-y-3 mb-6">
+                {% for category, message in messages %}
+                  {% if category == 'success' %}
+                    <div class="alert-success">
+                      <i class="fas fa-check-circle mt-0.5"></i>
+                      <div><b>Успех.</b> {{ message }}</div>
+                    </div>
+                  {% else %}
+                    <div class="alert-error">
+                      <i class="fas fa-exclamation-circle mt-0.5"></i>
+                      <div><b>Ошибка.</b> {{ message }}</div>
+                    </div>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endwith %}
+
+          <div class="fade-in">
+            {% block content %}{% endblock %}
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
+

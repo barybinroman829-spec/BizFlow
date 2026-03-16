@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Дашборд{% endblock %}
+{% block header_title %}Обзор системы{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+  <div class="stat-card">
+    <div class="stat-header">
+      <h3>Всего клиентов</h3>
+      <div class="icon bg-blue-50 text-blue-700"><i class="fas fa-users"></i></div>
+    </div>
+    <p class="stat-value">{{ total }}</p>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-header">
+      <h3>В работе</h3>
+      <div class="icon bg-teal-50 text-teal-700"><i class="fas fa-tasks"></i></div>
+    </div>
+    <p class="stat-value">{{ active }}</p>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-header">
+      <h3>Новые</h3>
+      <div class="icon bg-amber-50 text-amber-700"><i class="fas fa-star"></i></div>
+    </div>
+    <p class="stat-value">{{ new }}</p>
+  </div>
+</div>
+
+<div class="card overflow-hidden">
+  <div class="flex items-center justify-between p-6 border-b border-slate-100">
+    <h3 class="font-bold text-slate-800">Последние клиенты</h3>
+    <a href="{{ url_for('main.clients') }}" class="text-sm text-primary hover:text-teal-800 hover:underline font-medium">
+      Открыть список клиентов →
+    </a>
+  </div>
+
+  {% if not recent %}
+    <div class="p-8 text-center text-slate-500">
+      Пока нет клиентов. Нажмите «Клиенты» → «Добавить клиента».
+    </div>
+  {% else %}
+    <table class="w-full text-left">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="p-4 font-medium">Клиент</th>
+          <th class="p-4 font-medium">Статус</th>
+          <th class="p-4 font-medium">Компания</th>
+          <th class="p-4 font-medium">Создан</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for r in recent %}
+        <tr class="hover:bg-slate-50 transition-colors">
+          <td class="p-4 font-medium text-slate-900">{{ r.full_name }}</td>
+          <td class="p-4">
+            {% include "partials/status_badge.html" with context %}
+          </td>
+          <td class="p-4 text-slate-600">{{ r.company }}</td>
+          <td class="p-4 text-slate-500 text-sm">{{ r.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}
+

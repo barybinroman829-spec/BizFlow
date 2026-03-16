@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Регистрация{% endblock %}
+{% block header_title %}Регистрация{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto card">
+  <h1 class="text-xl font-bold text-slate-900 mb-1">Регистрация</h1>
+  <p class="text-sm text-slate-600 mb-4">Создайте аккаунт, чтобы начать работу в BizFlow.</p>
+
+  <form method="post" class="space-y-4">
+    <div>
+      <label class="label">Email <span class="text-rose-500">*</span></label>
+      <input name="email" type="email" required
+             class="input"
+             placeholder="mail@example.com">
+    </div>
+
+    <div>
+      <label class="label">Пароль <span class="text-rose-500">*</span></label>
+      <input name="password" type="password" required minlength="6"
+             class="input"
+             placeholder="минимум 6 символов">
+    </div>
+
+    <div>
+      <label class="label">Повтор пароля <span class="text-rose-500">*</span></label>
+      <input name="password2" type="password" required minlength="6"
+             class="input"
+             placeholder="повторите пароль">
+    </div>
+
+    <button class="w-full btn-primary" type="submit">
+      Создать аккаунт
+    </button>
+  </form>
+
+  <div class="mt-4 text-sm text-slate-600">
+    Уже есть аккаунт? <a class="text-primary hover:underline font-medium" href="{{ url_for('main.login') }}">Войти</a>
+  </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Ошибка{% endblock %}
+{% block header_title %}Ошибка{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto card">
+  <h1 class="text-xl font-bold text-slate-900 mb-2">
+    {% if code >= 500 %}Ошибка сервера{% elif code == 404 %}Страница не найдена{% else %}Запрос не выполнен{% endif %}
+    ({{ code }})
+  </h1>
+  <p class="text-slate-600 mb-4">
+    {% if code >= 500 %}
+      Произошла внутренняя ошибка. Попробуйте ещё раз.
+    {% elif code == 404 %}
+      Страница не найдена. Проверьте адрес или вернитесь на главную.
+    {% else %}
+      Проверьте введённые данные и попробуйте снова.
+    {% endif %}
+  </p>
+  <div class="flex gap-3">
+    <a class="btn-primary" href="{% if user %}{{ url_for('main.dashboard') }}{% else %}{{ url_for('main.index') }}{% endif %}">
+      На главную
+    </a>
+    <a class="btn-secondary" href="javascript:history.back()">
+      Назад
+    </a>
+  </div>
+</div>
+{% endblock %}
+

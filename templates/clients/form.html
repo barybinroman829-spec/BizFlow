@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — {% if client %}Редактировать клиента{% else %}Новый клиент{% endif %}{% endblock %}
+{% block header_title %}{% if client %}Редактирование клиента{% else %}Новый клиент{% endif %}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto card">
+  <h1 class="text-xl font-bold text-slate-900 mb-1">
+    {% if client %}Редактирование клиента{% else %}Новый клиент{% endif %}
+  </h1>
+  <p class="text-sm text-slate-600 mb-5">
+    Поля со звёздочкой обязательны. При ошибках покажем сообщение — приложение не падает.
+  </p>
+
+  <form method="post" action="{% if client %}{{ url_for('main.client_edit_post', client_id=client.id) }}{% else %}{{ url_for('main.client_new_post') }}{% endif %}" class="space-y-4">
+    <div>
+      <label class="label">ФИО клиента <span class="text-rose-500">*</span></label>
+      <input name="full_name" value="{{ client.full_name if client else '' }}" type="text" required
+             class="input"
+             placeholder="Иван Иванов">
+    </div>
+
+    <div>
+      <label class="label">Компания <span class="text-rose-500">*</span></label>
+      <input name="company" value="{{ client.company if client else '' }}" type="text" required
+             class="input"
+             placeholder="ООО Ромашка">
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="label">Телефон</label>
+        <input name="phone" value="{{ client.phone if client else '' }}" type="text" inputmode="tel"
+               class="input"
+               placeholder="+7 (999) 123-45-67">
+        <p class="text-xs text-slate-500 mt-1">
+          Разрешены цифры, пробелы и символы + ( ) - .
+        </p>
+      </div>
+      <div>
+        <label class="label">Email</label>
+        <input name="email" value="{{ client.email if client else '' }}" type="email"
+               class="input"
+               placeholder="mail@example.com">
+      </div>
+    </div>
+
+    <div>
+      <label class="label">Статус</label>
+      {% set s = client.status if client else 'new' %}
+      <select name="status" class="input bg-white">
+        <option value="new" {% if s == 'new' %}selected{% endif %}>Новый</option>
+        <option value="active" {% if s == 'active' %}selected{% endif %}>В работе</option>
+        <option value="completed" {% if s == 'completed' %}selected{% endif %}>Завершен</option>
+        <option value="archived" {% if s == 'archived' %}selected{% endif %}>Архив</option>
+      </select>
+    </div>
+
+    <div class="pt-4 flex justify-end gap-3">
+      <a href="{{ url_for('main.clients') }}" class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+        Отмена
+      </a>
+      <button type="submit" class="btn-primary px-6 py-2">
+        {% if client %}Сохранить изменения{% else %}Сохранить клиента{% endif %}
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+

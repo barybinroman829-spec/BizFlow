@@ -1,0 +1,13 @@
+{% set s = r.status if r is defined else row.status if row is defined else status %}
+{% if s == 'new' %}
+  <span class="badge bg-amber-100 text-amber-800 border-amber-200">Новый</span>
+{% elif s == 'active' %}
+  <span class="badge bg-teal-100 text-teal-800 border-teal-200">В работе</span>
+{% elif s == 'completed' %}
+  <span class="badge bg-blue-100 text-blue-800 border-blue-200">Завершен</span>
+{% elif s == 'archived' %}
+  <span class="badge bg-slate-100 text-slate-700 border-slate-200">Архив</span>
+{% else %}
+  <span class="badge bg-slate-100 text-slate-700 border-slate-200">{{ s }}</span>
+{% endif %}
+

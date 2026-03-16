@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Вход{% endblock %}
+{% block header_title %}Вход{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto card">
+  <h1 class="text-xl font-bold text-slate-900 mb-1">Вход</h1>
+  <p class="text-sm text-slate-600 mb-4">Введите Email и пароль.</p>
+
+  <form method="post" class="space-y-4">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <div>
+      <label class="label">Email <span class="text-rose-500">*</span></label>
+      <input name="email" type="email" required
+             class="input"
+             placeholder="mail@example.com">
+    </div>
+
+    <div>
+      <label class="label">Пароль <span class="text-rose-500">*</span></label>
+      <input name="password" type="password" required
+             class="input"
+             placeholder="ваш пароль">
+    </div>
+
+    <button class="w-full btn-primary" type="submit">
+      Войти
+    </button>
+  </form>
+
+  <div class="mt-4 text-sm text-slate-600">
+    Нет аккаунта? <a class="text-primary hover:underline font-medium" href="{{ url_for('main.register') }}">Регистрация</a>
+  </div>
+</div>
+{% endblock %}
+
