@@ -1,92 +1,118 @@
 """
-BizFlow — запускной файл (entrypoint).
-
+BizFlow — CRM для малого бизнеса (единый файл).
 PowerShell (Windows):
   py -3 -m pip install -r requirements.txt
   py -3 .\BizFlow
-
 Открыть:
   http://127.0.0.1:5000
 """
+from __future__ import annotations
 
-from sre_parse import parse_template
+import os
+import re
+import sqlite3
+import secrets
+from datetime import datetime
+from functools import wraps
+from typing import Any, Callable, Optional
 
-from flask import render_template_string
+from flask import (
+    Flask,
+    abort,
+    flash,
+    g,
+    redirect,
+    render_template_string,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.security import check_password_hash, generate_password_hash
 
-from app import create_app
+# ==================== КОНСТАНТЫ ====================
+APP_NAME = "BizFlow"
+DB_FILENAME = "bizflow.sqlite3"
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_RE = re.compile(r"^[0-9+()\-.\s]{0,30}$")
 
-app = create_app()
+# ==================== ПРИЛОЖЕНИЕ ====================
+def create_app() -> Flask:
+    root_path = os.path.dirname(os.path.abspath(__file__))
+    
+    app = Flask(__name__)
+    app.config["SECRET_KEY"] = os.environ.get("BIZFLOW_SECRET_KEY") or secrets.token_hex(32)
+    app.config["DATABASE"] = os.path.join(root_path, DB_FILENAME)
+
+    @app.before_request
+    def _open_db() -> None:
+        g.db = sqlite3.connect(app.config["DATABASE"])
+        g.db.row_factory = sqlite3.Row
+
+    @app.teardown_request
+    def _close_db(exc: Optional[BaseException]) -> None:
+        db = getattr(g, "db", None)
+        if db is not None:
+            db.close()
+
+    # Инициализация БД
+    init_db(app)
+
+    # Регистрация маршрутов
+    register_routes(app)
+
+    # Регистрация обработчиков ошибок
+    register_error_handlers(app)
+
+    return app
 
 
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+# ==================== БАЗА ДАННЫХ ====================
+def init_db(app: Flask) -> None:
+    db_path = app.config["DATABASE"]
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-"""
-BizFlow — точка входа (запуск) Flask-приложения.
-
-Установка зависимостей (PowerShell):
-  py -3 -m pip install -r requirements.txt
-
-Запуск:
-  py -3 .\BizFlow
-
-Открыть в браузере:
-  http://127.0.0.1:5000
-"""
-
-from app import create_app
-
-
-app = create_app()
-
-
-if __name__ == "__main__":
+    db = sqlite3.connect(db_path)
     try:
-        app.run(host="127.0.0.1", port=5000, debug=False)
-    except OSError as e:
-        print("Не удалось запустить сервер BizFlow.")
-        print("Проверьте, что порт 5000 свободен, и повторите попытку.")
-        print(f"Текст ошибки: {e}")
-
-    @app.errorhandler(400)
-    @app.errorhandler(401)
-    @app.errorhandler(403)
-    @app.errorhandler(404)
-    @app.errorhandler(500)
-    def _handle_error(err):  # type: ignore[no-untyped-def]
-        code = getattr(err, "code", 500)
-        title = "Ошибка" if code >= 500 else "Запрос не выполнен"
-        message = (
-            "Произошла внутренняя ошибка. Попробуйте ещё раз."
-            if code >= 500
-            else "Страница не найдена."
-            if code == 404
-            else "Проверьте введённые данные и попробуйте снова."
+        db.execute("PRAGMA foreign_keys = ON;")
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              email TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            """
         )
-        return (
-            render_template_string(
-                parse_template(
-                    content=f"""
-                    <div class="max-w-2xl mx-auto bg-white border border-slate-200 rounded-xl p-6">
-                      <h1 class="text-xl font-bold text-slate-900 mb-2">{title} ({code})</h1>
-                      <p class="text-slate-600 mb-4">{message}</p>
-                      <div class="flex gap-3">
-                        <a class="px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-teal-700" href="{url_for('index')}">На главную</a>
-                        <a class="px-4 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium hover:bg-slate-200" href="javascript:history.back()">Назад</a>
-                      </div>
-                    </div>
-                    """,
-                    page_title=f"{APP_NAME} — Ошибка",
-                )
-            ),
-            code,
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clients (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL,
+              full_name TEXT NOT NULL,
+              company TEXT NOT NULL,
+              phone TEXT NOT NULL DEFAULT '',
+              email TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'new',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            """
         )
+        db.commit()
+    finally:
+        db.close()
 
-    with app.app_context():
-        init_db(app)
 
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+# ==================== МАРШРУТЫ ====================
+def register_routes(app: Flask) -> None:
+    
     # ---------- Auth helpers ----------
-
     def login_required(view: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(view)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -94,7 +120,6 @@ if __name__ == "__main__":
                 flash("Пожалуйста, войдите в систему.", "error")
                 return redirect(url_for("login", next=request.path))
             return view(*args, **kwargs)
-
         return wrapped
 
     def current_user() -> Optional[sqlite3.Row]:
@@ -105,7 +130,6 @@ if __name__ == "__main__":
         return row
 
     # ---------- Страницы ----------
-
     @app.get("/")
     def index():
         if session.get("user_id"):
@@ -369,8 +393,8 @@ if __name__ == "__main__":
         g.db.execute(
             """
             UPDATE clients
-               SET full_name = ?, company = ?, phone = ?, email = ?, status = ?, updated_at = ?
-             WHERE id = ? AND user_id = ?
+            SET full_name = ?, company = ?, phone = ?, email = ?, status = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
             """,
             (
                 data["full_name"],
@@ -410,51 +434,46 @@ if __name__ == "__main__":
             )
         )
 
-return app
 
-
-def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def init_db(app: Flask) -> None:
-    db_path = app.config["DATABASE"]
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-    db = sqlite3.connect(db_path)
-    try:
-        db.execute("PRAGMA foreign_keys = ON;")
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              email TEXT NOT NULL UNIQUE,
-              password_hash TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-            """
+# ==================== ОБРАБОТЧИКИ ОШИБОК ====================
+def register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(400)
+    @app.errorhandler(401)
+    @app.errorhandler(403)
+    @app.errorhandler(404)
+    @app.errorhandler(500)
+    def _handle_error(err):
+        code = getattr(err, "code", 500)
+        title = "Ошибка" if code >= 500 else "Запрос не выполнен"
+        message = (
+            "Произошла внутренняя ошибка. Попробуйте ещё раз."
+            if code >= 500
+            else "Страница не найдена."
+            if code == 404
+            else "Проверьте введённые данные и попробуйте снова."
         )
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS clients (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              user_id INTEGER NOT NULL,
-              full_name TEXT NOT NULL,
-              company TEXT NOT NULL,
-              phone TEXT NOT NULL DEFAULT '',
-              email TEXT NOT NULL DEFAULT '',
-              status TEXT NOT NULL DEFAULT 'new',
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
-            """
+        return (
+            render_template_string(
+                base_template(
+                    content=f"""
+                    <div class="max-w-2xl mx-auto bg-white border border-slate-200 rounded-xl p-6">
+                        <h1 class="text-xl font-bold text-slate-900 mb-2">{title} ({code})</h1>
+                        <p class="text-slate-600 mb-4">{message}</p>
+                        <div class="flex gap-3">
+                            <a class="px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-teal-700" href="{url_for('index')}">На главную</a>
+                            <a class="px-4 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium hover:bg-slate-200" href="javascript:history.back()">Назад</a>
+                        </div>
+                    </div>
+                    """,
+                    page_title=f"{APP_NAME} — Ошибка",
+                    user=None,
+                )
+            ),
+            code,
         )
-        db.commit()
-    finally:
-        db.close()
 
 
+# ==================== ВАЛИДАЦИЯ ====================
 def validate_client_form(form: Any) -> tuple[dict[str, str], list[str]]:
     full_name = (form.get("full_name") or "").strip()
     company = (form.get("company") or "").strip()
@@ -486,123 +505,117 @@ def validate_client_form(form: Any) -> tuple[dict[str, str], list[str]]:
     )
 
 
-# -------------------- UI templates (all inline) --------------------
-
-
+# ==================== ШАБЛОНЫ (UI) ====================
 def base_template(*, content: str, page_title: str, user: Optional[sqlite3.Row] = None, active_nav: str = "") -> str:
     user_email = (user["email"] if user else "")
     authed = bool(user)
-
+    
     nav = ""
     if authed:
         nav = f"""
         <aside class="w-64 bg-white border-r border-slate-200 flex flex-col z-20 shadow-lg">
-          <div class="p-6 flex items-center gap-3 border-b border-slate-100">
-            <div class="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-primary font-black">BF</div>
-            <div>
-              <div class="text-xl font-bold text-slate-900 tracking-tight">{APP_NAME}</div>
-              <div class="text-xs text-slate-500">CRM для малого бизнеса</div>
+            <div class="p-6 flex items-center gap-3 border-b border-slate-100">
+                <div class="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-primary font-black">BF</div>
+                <div>
+                    <div class="text-xl font-bold text-slate-900 tracking-tight">{APP_NAME}</div>
+                    <div class="text-xs text-slate-500">CRM для малого бизнеса</div>
+                </div>
             </div>
-          </div>
-
-          <nav class="flex-1 p-4 space-y-2">
-            {nav_button("dashboard", "Дашборд", "fa-chart-pie", active_nav)}
-            {nav_button("clients", "Клиенты", "fa-users", active_nav)}
-            {nav_button("docs", "Документация", "fa-book", active_nav, href=url_for("docs"))}
-          </nav>
-
-          <div class="p-4 border-t border-slate-100">
-            <div class="flex items-center gap-3 px-4 py-2">
-              <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
-                {user_email[:1].upper() if user_email else "U"}
-              </div>
-              <div class="min-w-0">
-                <p class="text-sm font-medium text-slate-900 truncate">{user_email}</p>
-                <form method="post" action="{url_for("logout")}">
-                  <button class="text-xs text-slate-500 hover:text-slate-800 underline" type="submit">Выйти</button>
-                </form>
-              </div>
+            <nav class="flex-1 p-4 space-y-2">
+                {nav_button("dashboard", "Дашборд", "fa-chart-pie", active_nav)}
+                {nav_button("clients", "Клиенты", "fa-users", active_nav)}
+                {nav_button("docs", "Документация", "fa-book", active_nav, href=url_for("docs"))}
+            </nav>
+            <div class="p-4 border-t border-slate-100">
+                <div class="flex items-center gap-3 px-4 py-2">
+                    <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
+                        {user_email[:1].upper() if user_email else "U"}
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-slate-900 truncate">{user_email}</p>
+                        <form method="post" action="{url_for("logout")}">
+                            <button class="text-xs text-slate-500 hover:text-slate-800 underline" type="submit">Выйти</button>
+                        </form>
+                    </div>
+                </div>
             </div>
-          </div>
         </aside>
         """
-
+    
     header_actions = ""
     if authed:
         if active_nav == "clients":
             header_actions = f"""
             <a href="{url_for("client_new")}"
-              class="btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2">
-              <i class="fas fa-plus"></i> Добавить клиента
+            class="btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2">
+                <i class="fas fa-plus"></i> Добавить клиента
             </a>
             """
         else:
             header_actions = f"""
             <a href="{url_for("docs")}" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm font-medium hover:bg-slate-200">
-              Открыть документацию
+                Открыть документацию
             </a>
             """
     else:
         header_actions = f"""
         <div class="flex gap-2">
-          <a href="{url_for("login")}" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm font-medium hover:bg-slate-200">Войти</a>
-          <a href="{url_for("register")}" class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-teal-700">Регистрация</a>
+            <a href="{url_for("login")}" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm font-medium hover:bg-slate-200">Войти</a>
+            <a href="{url_for("register")}" class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-teal-700">Регистрация</a>
         </div>
         """
-
+    
     return f"""
-<!doctype html>
-<html lang="ru">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{page_title}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {{
-        theme: {{
-          extend: {{
-            colors: {{
-              primary: '#0f766e',
-              secondary: '#1e293b',
-              accent: '#14b8a6',
+    <!doctype html>
+    <html lang="ru">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{page_title}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <script>
+        tailwind.config = {{
+            theme: {{
+                extend: {{
+                    colors: {{
+                        primary: '#0f766e',
+                        secondary: '#1e293b',
+                        accent: '#14b8a6',
+                    }}
+                }}
             }}
-          }}
         }}
-      }}
-    </script>
-    <style>
-      body {{ font-family: 'Inter', sans-serif; }}
-      .fade-in {{ animation: fadeIn 0.25s ease-in-out; }}
-      @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(8px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-    </style>
-  </head>
-  <body class="bg-slate-50 text-slate-800 h-screen flex overflow-hidden">
-    {nav}
-
-    <main class="flex-1 flex flex-col relative overflow-hidden">
-      <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-8 z-10">
-        <h2 class="text-lg font-semibold text-slate-800">{header_title(active_nav, authed)}</h2>
-        {header_actions}
-      </header>
-
-      <div class="flex-1 overflow-y-auto p-6 md:p-8 bg-slate-50 relative">
-        <div class="absolute inset-0 opacity-5 pointer-events-none"
-             style="background-image: radial-gradient(circle at 20% 10%, rgba(20,184,166,0.35), transparent 40%),
-                                    radial-gradient(circle at 80% 20%, rgba(15,118,110,0.25), transparent 40%),
-                                    radial-gradient(circle at 50% 90%, rgba(30,41,59,0.12), transparent 45%);">
-        </div>
-        <div class="relative z-10 max-w-7xl mx-auto">
-          {flash_block()}
-          <div class="fade-in">{content}</div>
-        </div>
-      </div>
-    </main>
-  </body>
-</html>
-"""
+        </script>
+        <style>
+        body {{ font-family: 'Inter', sans-serif; }}
+        .fade-in {{ animation: fadeIn 0.25s ease-in-out; }}
+        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(8px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+        </style>
+    </head>
+    <body class="bg-slate-50 text-slate-800 h-screen flex overflow-hidden">
+        {nav}
+        <main class="flex-1 flex flex-col relative overflow-hidden">
+            <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-8 z-10">
+                <h2 class="text-lg font-semibold text-slate-800">{header_title(active_nav, authed)}</h2>
+                {header_actions}
+            </header>
+            <div class="flex-1 overflow-y-auto p-6 md:p-8 bg-slate-50 relative">
+                <div class="absolute inset-0 opacity-5 pointer-events-none"
+                style="background-image: radial-gradient(circle at 20% 10%, rgba(20,184,166,0.35), transparent 40%),
+                radial-gradient(circle at 80% 20%, rgba(15,118,110,0.25), transparent 40%),
+                radial-gradient(circle at 50% 90%, rgba(30,41,59,0.12), transparent 45%);">
+                </div>
+                <div class="relative z-10 max-w-7xl mx-auto">
+                    {flash_block()}
+                    <div class="fade-in">{content}</div>
+                </div>
+            </div>
+        </main>
+    </body>
+    </html>
+    """
 
 
 def header_title(active_nav: str, authed: bool) -> str:
@@ -623,32 +636,30 @@ def nav_button(key: str, label: str, icon: str, active_nav: str, href: Optional[
         href = url_for(key)
     return f"""
     <a href="{href}"
-       class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 border {cls}">
-      <i class="fas {icon} w-5"></i> {label}
+    class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 border {cls}">
+        <i class="fas {icon} w-5"></i> {label}
     </a>
     """
 
 
 def flash_block() -> str:
-    # Jinja-free: Flask still stores flashes; we'll render via a tiny inline script-less approach by reading them in template string.
-    # We cannot call get_flashed_messages here easily without context, so we embed a small Jinja snippet inside.
     return """
     {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="space-y-3 mb-6">
-          {% for category, message in messages %}
-            {% if category == 'success' %}
-              <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-lg text-sm flex gap-2 items-start">
-                <i class="fas fa-check-circle mt-0.5"></i><div><b>Успех.</b> {{ message }}</div>
-              </div>
-            {% else %}
-              <div class="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 rounded-lg text-sm flex gap-2 items-start">
-                <i class="fas fa-exclamation-circle mt-0.5"></i><div><b>Ошибка.</b> {{ message }}</div>
-              </div>
-            {% endif %}
-          {% endfor %}
+    {% if messages %}
+    <div class="space-y-3 mb-6">
+        {% for category, message in messages %}
+        {% if category == 'success' %}
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-lg text-sm flex gap-2 items-start">
+            <i class="fas fa-check-circle mt-0.5"></i><div><b>Успех.</b> {{ message }}</div>
         </div>
-      {% endif %}
+        {% else %}
+        <div class="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 rounded-lg text-sm flex gap-2 items-start">
+            <i class="fas fa-exclamation-circle mt-0.5"></i><div><b>Ошибка.</b> {{ message }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
     {% endwith %}
     """
 
@@ -656,33 +667,32 @@ def flash_block() -> str:
 def public_home_content() -> str:
     return f"""
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-      <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <h1 class="text-2xl font-black text-slate-900 mb-2">{APP_NAME}</h1>
-        <p class="text-slate-600 mb-5">
-          Простая CRM для малого бизнеса: ведите базу клиентов, статусы обслуживания и контакты.
-        </p>
-        <div class="flex flex-wrap gap-3">
-          <a href="{url_for("register")}" class="px-5 py-3 rounded-xl bg-primary text-white font-semibold hover:bg-teal-700">
-            Зарегистрироваться
-          </a>
-          <a href="{url_for("login")}" class="px-5 py-3 rounded-xl bg-slate-100 text-slate-900 font-semibold hover:bg-slate-200">
-            Войти
-          </a>
-          <a href="{url_for("docs")}" class="px-5 py-3 rounded-xl border border-slate-200 bg-white text-slate-900 font-semibold hover:bg-slate-50">
-            Документация
-          </a>
+        <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+            <h1 class="text-2xl font-black text-slate-900 mb-2">{APP_NAME}</h1>
+            <p class="text-slate-600 mb-5">
+                Простая CRM для малого бизнеса: ведите базу клиентов, статусы обслуживания и контакты.
+            </p>
+            <div class="flex flex-wrap gap-3">
+                <a href="{url_for("register")}" class="px-5 py-3 rounded-xl bg-primary text-white font-semibold hover:bg-teal-700">
+                    Зарегистрироваться
+                </a>
+                <a href="{url_for("login")}" class="px-5 py-3 rounded-xl bg-slate-100 text-slate-900 font-semibold hover:bg-slate-200">
+                    Войти
+                </a>
+                <a href="{url_for("docs")}" class="px-5 py-3 rounded-xl border border-slate-200 bg-white text-slate-900 font-semibold hover:bg-slate-50">
+                    Документация
+                </a>
+            </div>
         </div>
-      </div>
-
-      <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <h2 class="text-lg font-bold text-slate-900 mb-3">Что умеет BizFlow</h2>
-        <ul class="space-y-2 text-slate-700">
-          <li class="flex gap-2"><i class="fas fa-user-shield text-primary mt-1"></i><span><b>Авторизация</b>: регистрация и вход по Email/паролю</span></li>
-          <li class="flex gap-2"><i class="fas fa-database text-primary mt-1"></i><span><b>Реляционная БД</b>: SQLite, данные сохраняются между запусками</span></li>
-          <li class="flex gap-2"><i class="fas fa-list-check text-primary mt-1"></i><span><b>Клиенты</b>: добавить/редактировать/удалить, статусы и поиск</span></li>
-          <li class="flex gap-2"><i class="fas fa-circle-exclamation text-primary mt-1"></i><span><b>Ошибки</b>: показываем сообщения, приложение не падает</span></li>
-        </ul>
-      </div>
+        <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+            <h2 class="text-lg font-bold text-slate-900 mb-3">Что умеет BizFlow</h2>
+            <ul class="space-y-2 text-slate-700">
+                <li class="flex gap-2"><i class="fas fa-user-shield text-primary mt-1"></i><span><b>Авторизация</b>: регистрация и вход по Email/паролю</span></li>
+                <li class="flex gap-2"><i class="fas fa-database text-primary mt-1"></i><span><b>Реляционная БД</b>: SQLite, данные сохраняются между запусками</span></li>
+                <li class="flex gap-2"><i class="fas fa-list-check text-primary mt-1"></i><span><b>Клиенты</b>: добавить/редактировать/удалить, статусы и поиск</span></li>
+                <li class="flex gap-2"><i class="fas fa-circle-exclamation text-primary mt-1"></i><span><b>Ошибки</b>: показываем сообщения, приложение не падает</span></li>
+            </ul>
+        </div>
     </div>
     """
 
@@ -690,39 +700,34 @@ def public_home_content() -> str:
 def register_content() -> str:
     return f"""
     <div class="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-      <h1 class="text-xl font-bold text-slate-900 mb-1">Регистрация</h1>
-      <p class="text-sm text-slate-600 mb-4">Создайте аккаунт, чтобы начать работу в BizFlow.</p>
-
-      <form method="post" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Email <span class="text-rose-500">*</span></label>
-          <input name="email" type="email" required
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="mail@example.com">
+        <h1 class="text-xl font-bold text-slate-900 mb-1">Регистрация</h1>
+        <p class="text-sm text-slate-600 mb-4">Создайте аккаунт, чтобы начать работу в BizFlow.</p>
+        <form method="post" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Email <span class="text-rose-500">*</span></label>
+                <input name="email" type="email" required
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="mail@example.com">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Пароль <span class="text-rose-500">*</span></label>
+                <input name="password" type="password" required minlength="6"
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="минимум 6 символов">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Повтор пароля <span class="text-rose-500">*</span></label>
+                <input name="password2" type="password" required minlength="6"
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="повторите пароль">
+            </div>
+            <button class="w-full btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+                Создать аккаунт
+            </button>
+        </form>
+        <div class="mt-4 text-sm text-slate-600">
+            Уже есть аккаунт? <a class="text-primary hover:underline font-medium" href="{url_for("login")}">Войти</a>
         </div>
-
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Пароль <span class="text-rose-500">*</span></label>
-          <input name="password" type="password" required minlength="6"
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="минимум 6 символов">
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Повтор пароля <span class="text-rose-500">*</span></label>
-          <input name="password2" type="password" required minlength="6"
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="повторите пароль">
-        </div>
-
-        <button class="w-full btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
-          Создать аккаунт
-        </button>
-      </form>
-
-      <div class="mt-4 text-sm text-slate-600">
-        Уже есть аккаунт? <a class="text-primary hover:underline font-medium" href="{url_for("login")}">Войти</a>
-      </div>
     </div>
     """
 
@@ -730,33 +735,29 @@ def register_content() -> str:
 def login_content(next_url: str) -> str:
     return f"""
     <div class="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-      <h1 class="text-xl font-bold text-slate-900 mb-1">Вход</h1>
-      <p class="text-sm text-slate-600 mb-4">Введите Email и пароль.</p>
-
-      <form method="post" class="space-y-4">
-        <input type="hidden" name="next" value="{html_escape(next_url)}">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Email <span class="text-rose-500">*</span></label>
-          <input name="email" type="email" required
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="mail@example.com">
+        <h1 class="text-xl font-bold text-slate-900 mb-1">Вход</h1>
+        <p class="text-sm text-slate-600 mb-4">Введите Email и пароль.</p>
+        <form method="post" class="space-y-4">
+            <input type="hidden" name="next" value="{html_escape(next_url)}">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Email <span class="text-rose-500">*</span></label>
+                <input name="email" type="email" required
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="mail@example.com">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Пароль <span class="text-rose-500">*</span></label>
+                <input name="password" type="password" required
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="ваш пароль">
+            </div>
+            <button class="w-full btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+                Войти
+            </button>
+        </form>
+        <div class="mt-4 text-sm text-slate-600">
+            Нет аккаунта? <a class="text-primary hover:underline font-medium" href="{url_for("register")}">Регистрация</a>
         </div>
-
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Пароль <span class="text-rose-500">*</span></label>
-          <input name="password" type="password" required
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="ваш пароль">
-        </div>
-
-        <button class="w-full btn-primary bg-primary hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
-          Войти
-        </button>
-      </form>
-
-      <div class="mt-4 text-sm text-slate-600">
-        Нет аккаунта? <a class="text-primary hover:underline font-medium" href="{url_for("register")}">Регистрация</a>
-      </div>
     </div>
     """
 
@@ -766,47 +767,44 @@ def dashboard_content(*, total: int, active: int, new: int, recent: list[sqlite3
     for r in recent:
         recent_rows += f"""
         <tr class="hover:bg-slate-50 transition-colors">
-          <td class="p-4 font-medium text-slate-900">{html_escape(r["full_name"])}</td>
-          <td class="p-4">{status_badge(r["status"])}</td>
-          <td class="p-4 text-slate-600">{html_escape(r["company"])}</td>
-          <td class="p-4 text-slate-500 text-sm">{html_escape(r["created_at"])}</td>
+            <td class="p-4 font-medium text-slate-900">{html_escape(r["full_name"])}</td>
+            <td class="p-4">{status_badge(r["status"])}</td>
+            <td class="p-4 text-slate-600">{html_escape(r["company"])}</td>
+            <td class="p-4 text-slate-500 text-sm">{html_escape(r["created_at"])}</td>
         </tr>
         """
-
+    
     empty = ""
     if not recent:
         empty = '<div class="p-8 text-center text-slate-500">Пока нет клиентов. Нажмите «Клиенты» → «Добавить клиента».</div>'
-
+    
     return f"""
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-      {stat_card("Всего клиентов", total, "fa-users", "bg-blue-50 text-blue-700")}
-      {stat_card("В работе", active, "fa-tasks", "bg-teal-50 text-teal-700")}
-      {stat_card("Новые", new, "fa-star", "bg-amber-50 text-amber-700")}
+        {stat_card("Всего клиентов", total, "fa-users", "bg-blue-50 text-blue-700")}
+        {stat_card("В работе", active, "fa-tasks", "bg-teal-50 text-teal-700")}
+        {stat_card("Новые", new, "fa-star", "bg-amber-50 text-amber-700")}
     </div>
-
     <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-      <div class="p-6 border-b border-slate-100 flex justify-between items-center">
-        <h3 class="font-bold text-slate-800">Последние клиенты</h3>
-        <a href="{url_for("clients")}" class="text-sm text-primary hover:text-teal-800 hover:underline font-medium transition-colors">
-          Открыть список клиентов →
-        </a>
-      </div>
-
-      {empty}
-
-      <table class="w-full text-left">
-        <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
-          <tr>
-            <th class="p-4 font-medium">Клиент</th>
-            <th class="p-4 font-medium">Статус</th>
-            <th class="p-4 font-medium">Компания</th>
-            <th class="p-4 font-medium">Создан</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          {recent_rows}
-        </tbody>
-      </table>
+        <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+            <h3 class="font-bold text-slate-800">Последние клиенты</h3>
+            <a href="{url_for("clients")}" class="text-sm text-primary hover:text-teal-800 hover:underline font-medium transition-colors">
+                Открыть список клиентов →
+            </a>
+        </div>
+        {empty}
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+                <tr>
+                    <th class="p-4 font-medium">Клиент</th>
+                    <th class="p-4 font-medium">Статус</th>
+                    <th class="p-4 font-medium">Компания</th>
+                    <th class="p-4 font-medium">Создан</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {recent_rows}
+            </tbody>
+        </table>
     </div>
     """
 
@@ -816,67 +814,65 @@ def clients_content(*, rows: list[sqlite3.Row], q: str, status: str) -> str:
     for r in rows:
         body += f"""
         <tr class="hover:bg-slate-50 transition-colors">
-          <td class="p-4">
-            <div class="font-medium text-slate-900">{html_escape(r["full_name"])}</div>
-            <div class="text-xs text-slate-500">{html_escape(r["company"])}</div>
-          </td>
-          <td class="p-4 text-sm text-slate-700">
-            <div><i class="fas fa-phone w-4 text-slate-400"></i> {html_escape(r["phone"] or "")}</div>
-            <div class="mt-1"><i class="fas fa-envelope w-4 text-slate-400"></i> {html_escape(r["email"] or "")}</div>
-          </td>
-          <td class="p-4">{status_badge(r["status"])}</td>
-          <td class="p-4 text-right">
-            <a class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200" href="{url_for("client_edit", client_id=r["id"])}">
-              Редактировать
-            </a>
-            <form method="post" action="{url_for("client_delete", client_id=r["id"])}" class="inline" onsubmit="return confirm('Удалить клиента?');">
-              <button class="ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-rose-50 text-rose-700 hover:bg-rose-100" type="submit">
-                Удалить
-              </button>
-            </form>
-          </td>
+            <td class="p-4">
+                <div class="font-medium text-slate-900">{html_escape(r["full_name"])}</div>
+                <div class="text-xs text-slate-500">{html_escape(r["company"])}</div>
+            </td>
+            <td class="p-4 text-sm text-slate-700">
+                <div><i class="fas fa-phone w-4 text-slate-400"></i> {html_escape(r["phone"] or "")}</div>
+                <div class="mt-1"><i class="fas fa-envelope w-4 text-slate-400"></i> {html_escape(r["email"] or "")}</div>
+            </td>
+            <td class="p-4">{status_badge(r["status"])}</td>
+            <td class="p-4 text-right">
+                <a class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200" href="{url_for("client_edit", client_id=r["id"])}">
+                    Редактировать
+                </a>
+                <form method="post" action="{url_for("client_delete", client_id=r["id"])}" class="inline" onsubmit="return confirm('Удалить клиента?');">
+                    <button class="ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-rose-50 text-rose-700 hover:bg-rose-100" type="submit">
+                        Удалить
+                    </button>
+                </form>
+            </td>
         </tr>
         """
-
+    
     empty = ""
     if not rows:
         empty = '<div class="p-8 text-center text-slate-500">Клиенты не найдены. Попробуйте изменить фильтр или добавить нового клиента.</div>'
-
+    
     return f"""
     <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-      <form class="p-4 border-b border-slate-100 flex gap-4 flex-wrap" method="get">
-        <div class="relative flex-1 min-w-[200px]">
-          <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
-          <input name="q" value="{html_escape(q)}" type="text" placeholder="Поиск по имени, компании или email..."
-            class="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 text-sm">
-        </div>
-        <select name="status" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-          {option("all", "Все статусы", status)}
-          {option("new", "Новый", status)}
-          {option("active", "В работе", status)}
-          {option("completed", "Завершен", status)}
-          {option("archived", "Архив", status)}
-        </select>
-        <button class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-teal-700" type="submit">
-          Применить фильтр
-        </button>
-      </form>
-
-      {empty}
-
-      <table class="w-full text-left">
-        <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
-          <tr>
-            <th class="p-4 font-medium">Клиент</th>
-            <th class="p-4 font-medium">Контакты</th>
-            <th class="p-4 font-medium">Статус</th>
-            <th class="p-4 font-medium text-right">Действия</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          {body}
-        </tbody>
-      </table>
+        <form class="p-4 border-b border-slate-100 flex gap-4 flex-wrap" method="get">
+            <div class="relative flex-1 min-w-[200px]">
+                <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
+                <input name="q" value="{html_escape(q)}" type="text" placeholder="Поиск по имени, компании или email..."
+                class="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 text-sm">
+            </div>
+            <select name="status" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                {option("all", "Все статусы", status)}
+                {option("new", "Новый", status)}
+                {option("active", "В работе", status)}
+                {option("completed", "Завершен", status)}
+                {option("archived", "Архив", status)}
+            </select>
+            <button class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-teal-700" type="submit">
+                Применить фильтр
+            </button>
+        </form>
+        {empty}
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+                <tr>
+                    <th class="p-4 font-medium">Клиент</th>
+                    <th class="p-4 font-medium">Контакты</th>
+                    <th class="p-4 font-medium">Статус</th>
+                    <th class="p-4 font-medium text-right">Действия</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {body}
+            </tbody>
+        </table>
     </div>
     """
 
@@ -884,72 +880,65 @@ def clients_content(*, rows: list[sqlite3.Row], q: str, status: str) -> str:
 def client_form_content(*, client: Optional[sqlite3.Row]) -> str:
     is_edit = client is not None
     action = url_for("client_edit_post", client_id=client["id"]) if is_edit else url_for("client_new_post")
-
     full_name = html_escape(client["full_name"]) if is_edit else ""
     company = html_escape(client["company"]) if is_edit else ""
     phone = html_escape(client["phone"]) if is_edit else ""
     email = html_escape(client["email"]) if is_edit else ""
     status = client["status"] if is_edit else "new"
-
     title = "Редактирование клиента" if is_edit else "Новый клиент"
     btn = "Сохранить изменения" if is_edit else "Сохранить клиента"
-
+    
     return f"""
     <div class="max-w-2xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-      <h1 class="text-xl font-bold text-slate-900 mb-1">{title}</h1>
-      <p class="text-sm text-slate-600 mb-5">Поля со звёздочкой обязательны. При ошибках покажем сообщение — приложение не падает.</p>
-
-      <form method="post" action="{action}" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">ФИО клиента <span class="text-rose-500">*</span></label>
-          <input name="full_name" value="{full_name}" type="text" required
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="Иван Иванов">
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Компания <span class="text-rose-500">*</span></label>
-          <input name="company" value="{company}" type="text" required
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-            placeholder="ООО Ромашка">
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Телефон</label>
-            <input name="phone" value="{phone}" type="text" inputmode="tel"
-              class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-              placeholder="+7 (999) 123-45-67">
-            <p class="text-xs text-slate-500 mt-1">Разрешены цифры, пробелы и символы + ( ) - .</p>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
-            <input name="email" value="{email}" type="email"
-              class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-              placeholder="mail@example.com">
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Статус</label>
-          <select name="status"
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-white">
-            {select_option("new", "Новый", status)}
-            {select_option("active", "В работе", status)}
-            {select_option("completed", "Завершен", status)}
-            {select_option("archived", "Архив", status)}
-          </select>
-        </div>
-
-        <div class="pt-4 flex justify-end gap-3">
-          <a href="{url_for("clients")}" class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
-            Отмена
-          </a>
-          <button type="submit" class="btn-primary px-6 py-2 text-sm font-semibold text-white bg-primary hover:bg-teal-700 rounded-lg shadow-md transition-all">
-            {btn}
-          </button>
-        </div>
-      </form>
+        <h1 class="text-xl font-bold text-slate-900 mb-1">{title}</h1>
+        <p class="text-sm text-slate-600 mb-5">Поля со звёздочкой обязательны. При ошибках покажем сообщение — приложение не падает.</p>
+        <form method="post" action="{action}" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">ФИО клиента <span class="text-rose-500">*</span></label>
+                <input name="full_name" value="{full_name}" type="text" required
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="Иван Иванов">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Компания <span class="text-rose-500">*</span></label>
+                <input name="company" value="{company}" type="text" required
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                placeholder="ООО Ромашка">
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Телефон</label>
+                    <input name="phone" value="{phone}" type="text" inputmode="tel"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                    placeholder="+7 (999) 123-45-67">
+                    <p class="text-xs text-slate-500 mt-1">Разрешены цифры, пробелы и символы + ( ) - .</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                    <input name="email" value="{email}" type="email"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                    placeholder="mail@example.com">
+                </div>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Статус</label>
+                <select name="status"
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-white">
+                    {select_option("new", "Новый", status)}
+                    {select_option("active", "В работе", status)}
+                    {select_option("completed", "Завершен", status)}
+                    {select_option("archived", "Архив", status)}
+                </select>
+            </div>
+            <div class="pt-4 flex justify-end gap-3">
+                <a href="{url_for("clients")}" class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+                    Отмена
+                </a>
+                <button type="submit" class="btn-primary px-6 py-2 text-sm font-semibold text-white bg-primary hover:bg-teal-700 rounded-lg shadow-md transition-all">
+                    {btn}
+                </button>
+            </div>
+        </form>
     </div>
     """
 
@@ -957,39 +946,34 @@ def client_form_content(*, client: Optional[sqlite3.Row]) -> str:
 def docs_content() -> str:
     return f"""
     <div class="max-w-4xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-      <h1 class="text-2xl font-black text-slate-900 mb-4">Документация {APP_NAME}</h1>
-
-      <h2 class="text-lg font-bold text-slate-900 mb-2">1) Введение</h2>
-      <p class="text-slate-700 mb-5">
-        {APP_NAME} — веб‑приложение для ведения клиентской базы и статусов обслуживания у малого бизнеса.
-      </p>
-
-      <h2 class="text-lg font-bold text-slate-900 mb-2">2) Установка и запуск</h2>
-      <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-5 text-sm text-slate-800">
-        <div class="font-semibold mb-2">PowerShell:</div>
-        <pre class="whitespace-pre-wrap">pip install flask werkzeug
+        <h1 class="text-2xl font-black text-slate-900 mb-4">Документация {APP_NAME}</h1>
+        <h2 class="text-lg font-bold text-slate-900 mb-2">1) Введение</h2>
+        <p class="text-slate-700 mb-5">
+            {APP_NAME} — веб‑приложение для ведения клиентской базы и статусов обслуживания у малого бизнеса.
+        </p>
+        <h2 class="text-lg font-bold text-slate-900 mb-2">2) Установка и запуск</h2>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-5 text-sm text-slate-800">
+            <div class="font-semibold mb-2">PowerShell:</div>
+            <pre class="whitespace-pre-wrap">pip install flask werkzeug
 python .\\BizFlow</pre>
-        <div class="mt-2 text-slate-600">Далее откройте: <code>http://127.0.0.1:5000</code></div>
-      </div>
-
-      <h2 class="text-lg font-bold text-slate-900 mb-2">3) Основные функции</h2>
-      <ul class="list-disc pl-6 text-slate-700 mb-5 space-y-1">
-        <li>Регистрация и авторизация пользователей</li>
-        <li>Добавление, редактирование, удаление клиентов</li>
-        <li>Поиск и фильтр по статусу</li>
-        <li>Реляционная БД SQLite, данные сохраняются между запусками</li>
-      </ul>
-
-      <h2 class="text-lg font-bold text-slate-900 mb-2">4) Ручные тесты (3 сценария)</h2>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {test_card("Тест 1", "Регистрация и вход", "Создайте аккаунт и войдите. Ожидаемо: открывается «Дашборд».")}
-        {test_card("Тест 2", "Некорректный ввод", "Добавьте клиента с пустым ФИО. Ожидаемо: сообщение об ошибке, без падения.")}
-        {test_card("Тест 3", "Сохранение данных", "Добавьте клиента, перезапустите сервер. Ожидаемо: клиент остался (SQLite).")}
-      </div>
-
-      <div class="mt-6 text-xs text-slate-500">
-        Версия: 1.0 | БД: SQLite ({DB_FILENAME})
-      </div>
+            <div class="mt-2 text-slate-600">Далее откройте: <code>http://127.0.0.1:5000</code></div>
+        </div>
+        <h2 class="text-lg font-bold text-slate-900 mb-2">3) Основные функции</h2>
+        <ul class="list-disc pl-6 text-slate-700 mb-5 space-y-1">
+            <li>Регистрация и авторизация пользователей</li>
+            <li>Добавление, редактирование, удаление клиентов</li>
+            <li>Поиск и фильтр по статусу</li>
+            <li>Реляционная БД SQLite, данные сохраняются между запусками</li>
+        </ul>
+        <h2 class="text-lg font-bold text-slate-900 mb-2">4) Ручные тесты (3 сценария)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {test_card("Тест 1", "Регистрация и вход", "Создайте аккаунт и войдите. Ожидаемо: открывается «Дашборд».")}
+            {test_card("Тест 2", "Некорректный ввод", "Добавьте клиента с пустым ФИО. Ожидаемо: сообщение об ошибке, без падения.")}
+            {test_card("Тест 3", "Сохранение данных", "Добавьте клиента, перезапустите сервер. Ожидаемо: клиент остался (SQLite).")}
+        </div>
+        <div class="mt-6 text-xs text-slate-500">
+            Версия: 1.0 | БД: SQLite ({DB_FILENAME})
+        </div>
     </div>
     """
 
@@ -997,11 +981,11 @@ python .\\BizFlow</pre>
 def stat_card(title: str, value: int, icon: str, icon_cls: str) -> str:
     return f"""
     <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-slate-500 text-sm font-medium">{title}</h3>
-        <div class="p-2 rounded-lg {icon_cls}"><i class="fas {icon}"></i></div>
-      </div>
-      <p class="text-3xl font-bold text-slate-800">{value}</p>
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-slate-500 text-sm font-medium">{title}</h3>
+            <div class="p-2 rounded-lg {icon_cls}"><i class="fas {icon}"></i></div>
+        </div>
+        <p class="text-3xl font-bold text-slate-800">{value}</p>
     </div>
     """
 
@@ -1030,9 +1014,9 @@ def select_option(value: str, label: str, selected: str) -> str:
 def test_card(tag: str, title: str, text: str) -> str:
     return f"""
     <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
-      <div class="text-xs font-bold text-slate-500">{tag}</div>
-      <div class="text-sm font-bold text-slate-900 mt-1">{title}</div>
-      <div class="text-sm text-slate-700 mt-2">{text}</div>
+        <div class="text-xs font-bold text-slate-500">{tag}</div>
+        <div class="text-sm font-bold text-slate-900 mt-1">{title}</div>
+        <div class="text-sm text-slate-700 mt-2">{text}</div>
     </div>
     """
 
@@ -1047,14 +1031,12 @@ def html_escape(s: str) -> str:
     )
 
 
-app = create_app()
-
-
+# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
-    # Запуск без падений: понятное сообщение при занятом порте и пр.
+    app = create_app()
     try:
         app.run(host="127.0.0.1", port=5000, debug=False)
     except OSError as e:
-        print("Не удалось запустить сервер BizFlow.")
+        print("❌ Не удалось запустить сервер BizFlow.")
         print("Проверьте, что порт 5000 свободен, и повторите попытку.")
         print(f"Текст ошибки: {e}")

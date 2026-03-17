@@ -15,24 +15,33 @@ PHONE_RE = re.compile(r"^[0-9+()\-.\s]{0,30}$")
 
 
 def create_app() -> Flask:
-    app = Flask(__name__, instance_relative_config=False)
+    # 📁 Корневая папка проекта (где лежит run.py)
+    root_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    app = Flask(
+        __name__,
+        instance_relative_config=False,
+        template_folder=os.path.join(root_path, "templates"),
+        static_folder=os.path.join(root_path, "static")
+    )
+    
     app.config["SECRET_KEY"] = os.environ.get("BIZFLOW_SECRET_KEY") or secrets.token_hex(32)
-    app.config["DATABASE"] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), DB_FILENAME)
+    app.config["DATABASE"] = os.path.join(root_path, DB_FILENAME)
 
     @app.before_request
-    def _open_db() -> None:  # type: ignore[override]
+    def _open_db() -> None:
         g.db = sqlite3.connect(app.config["DATABASE"])
         g.db.row_factory = sqlite3.Row
 
     @app.teardown_request
-    def _close_db(exc: Optional[BaseException]) -> None:  # type: ignore[override]
+    def _close_db(exc: Optional[BaseException]) -> None:
         db = getattr(g, "db", None)
         if db is not None:
             db.close()
 
     init_db(app)
 
-    from . import routes  # noqa: F401
+    from . import routes
 
     app.register_blueprint(routes.bp)
 
@@ -110,4 +119,3 @@ def validate_client_form(form: Any) -> tuple[dict[str, str], list[str]]:
         },
         errors,
     )
-
